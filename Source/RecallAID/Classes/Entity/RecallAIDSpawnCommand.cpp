@@ -44,7 +44,7 @@ void FRecallAIDSpawnCommand::OnSpawn(FMassEntityManager& System,
 		{
 			TransformFragmentPtr->Position = SpawnInfo.Position;
 
-			if (const FJPRPhysicsBodyFragment* BodyFragmentPtr = EntityView.GetFragmentDataPtr<FJPRPhysicsBodyFragment>())
+			if (const FRecallPhysicsBodyFragment* BodyFragmentPtr = EntityView.GetFragmentDataPtr<FRecallPhysicsBodyFragment>())
 			{
 				TransformFragmentPtr->Position.Z += BodyFragmentPtr->Extents.Z;
 			}
