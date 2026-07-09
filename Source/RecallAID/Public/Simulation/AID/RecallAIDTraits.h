@@ -14,7 +14,7 @@
 /*
 * Trait to define an AI director.
 */
-UCLASS(meta=(DisplayName="MS AI Director"))
+UCLASS(meta=(DisplayName="RE AI Director"))
 class RECALLAID_API URecallAIDTrait : public UMassEntityTraitBase
 {
 	GENERATED_BODY()
@@ -30,7 +30,7 @@ protected:
 /*
 * Trait to define an AI director spawn point.
 */
-UCLASS(meta=(DisplayName="MS AI Director Spawn Point"))
+UCLASS(meta=(DisplayName="RE AI Director Spawn Point"))
 class RECALLAID_API URecallAIDSpawnPointTrait : public UMassEntityTraitBase
 {
 	GENERATED_BODY()
