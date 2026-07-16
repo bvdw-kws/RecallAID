@@ -7,8 +7,9 @@
 
 #include "RecallAIDSpawnPointProcessors.h"
 
-#include "MassExecutionContext.h"
 #include "Algo/AnyOf.h"
+#include "Desync/RecallDesyncLog.h"
+#include "MassExecutionContext.h"
 #include "Simulation/AID/RecallAIDFragments.h"
 #include "Simulation/Controller/RecallControllerFragments.h"
 #include "Simulation/Transform/RecallTransformFragments.h"
@@ -21,7 +22,7 @@ URecallAIDSpawnPointRelevancyProcessor::URecallAIDSpawnPointRelevancyProcessor()
 	, SpawnPointEntityQuery(*this)
 {
 	ExecutionFlags = static_cast<int32>(EProcessorExecutionFlags::All);
-	ProcessingPhase = EMassProcessingPhase::FrameEnd;
+	ProcessingPhase = EMassProcessingPhase::PostPhysics;
 }
 
 /**
@@ -110,10 +111,20 @@ void URecallAIDSpawnPointRelevancyProcessor::Execute(FMassEntityManager& EntityM
 			if (bIsRelevant)
 			{
 				Context.Defer().AddTag<FRecallAIDSpawnPointRelevantTag>(Entity);
+
+#if RECALL_DESYNC_LOG
+				RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDSpawnPointRelevancy_AddTag, FString::Printf(
+					TEXT("Entity: %s, Tag: FRecallAIDSpawnPointRelevantTag"), *Entity.DebugGetDescription()));
+#endif // RECALL_DESYNC_LOG
 			}
 			else
 			{
 				Context.Defer().RemoveTag<FRecallAIDSpawnPointRelevantTag>(Entity);
+
+#if RECALL_DESYNC_LOG
+				RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDSpawnPointRelevancy_RemoveTag, FString::Printf(
+					TEXT("Entity: %s, Tag: FRecallAIDSpawnPointRelevantTag"), *Entity.DebugGetDescription()));
+#endif // RECALL_DESYNC_LOG
 			}
 		}
 	});
