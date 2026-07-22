@@ -12,6 +12,7 @@
 #include "AID/RecallAIDAsset.h"
 #include "AID/RecallAIDSpawnPointSettings.h"
 #include "AID/RecallAIDSpawnTypes.h"
+#include "Desync/RecallDesyncLog.h"
 #include "Entity/RecallAIDSpawnCommand.h"
 #include "NavigationSystem.h"
 #include "Simulation/AID/RecallAIDFragments.h"
@@ -100,12 +101,27 @@ int32 Recall::AID::Utils::SpawnEnemyGroup(
 	const int32 SpawnPointIndex = RandomStream.RandRange(0, SpawnPoints.Num() - 1);
 	const FRecallAIDSpawnPointCache& SpawnPoint = SpawnPoints[SpawnPointIndex];
 
+#if RECALL_DESYNC_LOG
+	RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnEnemyGroup,
+		FString::Printf(TEXT("%s EntityCount: %d, Timer: %f, SpawnPointIndex: %d, SpawnPointCount: %d, SpawnPointLocation: %s"),
+		*AIDEntity.DebugGetDescription(), EntityCount, Timer, SpawnPointIndex, SpawnPoints.Num(), *SpawnPoint.Location.ToString()));
+#endif // RECALL_DESYNC_LOG
+
 	// Create spawn parameters
 	FRecallEntityAsyncSpawnParameters SpawnParams = CreateSpawnParameters(AIDEntity, EntityCount);
 	FRecallAIDSpawnCommand& SpawnCommand = SpawnParams.SpawnCommand.GetMutable<FRecallAIDSpawnCommand>();
 	
 	// Calculate spawn positions
 	CalculateSpawnPositions(SpawnEnemyGroup, SpawnPoint, RandomStream, NavSys, SpawnCommand.SpawnInfos);
+
+#if RECALL_DESYNC_LOG
+	for (int32 SpawnInfoIndex = 0; SpawnInfoIndex < SpawnCommand.SpawnInfos.Num(); SpawnInfoIndex++)
+	{
+		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnEnemyGroupPosition,
+			FString::Printf(TEXT("%s SpawnInfoIndex: %d, Position: %s"),
+			*AIDEntity.DebugGetDescription(), SpawnInfoIndex, *SpawnCommand.SpawnInfos[SpawnInfoIndex].Position.ToString()));
+	}
+#endif // RECALL_DESYNC_LOG
 	
 	// Spawn entities
 	SpawnContext.EntityAsyncSpawnSystem.SpawnEntityAsync(SpawnEnemyGroup.EntityConfigAsset,
@@ -265,6 +281,13 @@ void Recall::AID::Utils::ProcessAIDSpawnGroups(
 	TArray<FRecallAIDSpawnPointCache> AvailableSpawnPoints;
 	FilterAvailableSpawnPoints(SpawnPoints, AIDAsset, CurrentTime, AvailableSpawnPoints);
 
+#if RECALL_DESYNC_LOG
+	RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDProcessSpawnGroups,
+		FString::Printf(TEXT("%s CurrentTime: %f, SpawnPointCount: %d, AvailableSpawnPointCount: %d, CurrentAIDStateName: %s"),
+		*AIDEntity.DebugGetDescription(), CurrentTime, SpawnPoints.Num(), AvailableSpawnPoints.Num(),
+		CurrentAIDState ? *CurrentAIDState->StateName.ToString() : TEXT("None")));
+#endif // RECALL_DESYNC_LOG
+
 	// Skip spawning if no spawn points are available due to cooldown
 	if (AvailableSpawnPoints.Num() == 0)
 	{
@@ -283,6 +306,13 @@ void Recall::AID::Utils::ProcessAIDSpawnGroups(
 		
 		// Get spawn configuration for this group
 		const FSpawnGroupConfiguration Config = GetSpawnGroupConfiguration(SpawnGroup, CurrentAIDState);
+
+#if RECALL_DESYNC_LOG
+		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupConfig,
+			FString::Printf(TEXT("%s GroupIndex: %d, bGroupEnabled: %s, SpawnSpeedModifier: %f, SpawnRateModifier: %f, bBurstMode: %s, BurstDuration: %f"),
+			*AIDEntity.DebugGetDescription(), GroupIndex, *Recall::Desync::Conv_BoolToString(Config.bGroupEnabled),
+			Config.SpawnSpeedModifier, Config.SpawnRateModifier, *Recall::Desync::Conv_BoolToString(Config.bBurstMode), Config.BurstDuration));
+#endif // RECALL_DESYNC_LOG
 		
 		if (!Config.bGroupEnabled)
 		{
@@ -290,13 +320,30 @@ void Recall::AID::Utils::ProcessAIDSpawnGroups(
 		}
 		
 		// Process burst mode logic
-		if (!ProcessBurstMode(Instance, Config, DeltaTime))
+		const bool bBurstModeAllowsSpawn = ProcessBurstMode(Instance, Config, DeltaTime);
+
+#if RECALL_DESYNC_LOG
+		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupBurst,
+			FString::Printf(TEXT("%s GroupIndex: %d, bBurstModeAllowsSpawn: %s, BurstTimer: %f, bBurstCompleted: %s"),
+			*AIDEntity.DebugGetDescription(), GroupIndex, *Recall::Desync::Conv_BoolToString(bBurstModeAllowsSpawn),
+			Instance.BurstTimer, *Recall::Desync::Conv_BoolToString(Instance.bBurstCompleted)));
+#endif // RECALL_DESYNC_LOG
+
+		if (!bBurstModeAllowsSpawn)
 		{
 			continue;
 		}
 		
 		// Process spawn timing
-		if (!ProcessSpawnTiming(Instance, Config, DeltaTime))
+		const bool bTimingAllowsSpawn = ProcessSpawnTiming(Instance, Config, DeltaTime);
+
+#if RECALL_DESYNC_LOG
+		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupTiming,
+			FString::Printf(TEXT("%s GroupIndex: %d, bTimingAllowsSpawn: %s, SpawnTimer: %f"),
+			*AIDEntity.DebugGetDescription(), GroupIndex, *Recall::Desync::Conv_BoolToString(bTimingAllowsSpawn), Instance.SpawnTimer));
+#endif // RECALL_DESYNC_LOG
+
+		if (!bTimingAllowsSpawn)
 		{
 			continue;
 		}
@@ -309,6 +356,12 @@ void Recall::AID::Utils::ProcessAIDSpawnGroups(
 		// Apply rate modifier to entity count
 		int32 EntityCount = FMath::RoundToInt(BaseEntityCount * Config.SpawnRateModifier);
 		EntityCount = FMath::Max(1, EntityCount); // Ensure at least 1 entity
+
+#if RECALL_DESYNC_LOG
+		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupEntityCount,
+			FString::Printf(TEXT("%s GroupIndex: %d, BaseEntityCount: %d, EntityCount: %d, MobCount: %d, MobLimit: %d"),
+			*AIDEntity.DebugGetDescription(), GroupIndex, BaseEntityCount, EntityCount, AIDFragment.MobCount, AIDAsset.MobLimit));
+#endif // RECALL_DESYNC_LOG
 
 		if (AIDFragment.MobCount + EntityCount > AIDAsset.MobLimit)
 		{

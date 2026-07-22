@@ -8,8 +8,10 @@
 #include "RecallAIDProcessors.h"
 
 #include "AID/RecallAIDAsset.h"
+#include "Desync/RecallDesyncLog.h"
 #include "MassExecutionContext.h"
 #include "Simulation/AID/RecallAIDFragments.h"
+#include "Simulation/StateTree/RecallStateTreeProcessorGroupTypes.h"
 #include "Simulation/Transform/RecallTransformFragments.h"
 #include "System/Entity/RecallEntityAsyncSpawnSubsystem.h"
 #include "System/Random/RecallRandomNumberSubsystem.h"
@@ -95,6 +97,7 @@ URecallAIDSpawnProcessor::URecallAIDSpawnProcessor()
 {
 	ExecutionFlags = static_cast<int32>(EProcessorExecutionFlags::All);
 	ProcessingPhase = EMassProcessingPhase::PrePhysics;
+	ExecutionOrder.ExecuteAfter.Add(Recall::StateTree::ProcessorGroupNames::StateTreeUpdate);
 }
 
 /**
@@ -208,6 +211,13 @@ void URecallAIDSpawnProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					return State.StateName == AIDFragment.CurrentAIDStateName;
 				});
 			}
+
+#if RECALL_DESYNC_LOG
+			RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDSpawnPreProcess,
+				FString::Printf(TEXT("%s CurrentAIDStateName: %s, MobCount: %d, SpawnPointCount: %d"),
+				*AIDEntity.DebugGetDescription(), *AIDFragment.CurrentAIDStateName.ToString(),
+				AIDFragment.MobCount, SpawnPoints.Num()));
+#endif // RECALL_DESYNC_LOG
 			
 			// Process all spawn groups for this AI Director entity
 			Recall::AID::Utils::ProcessAIDSpawnGroups(
@@ -220,6 +230,21 @@ void URecallAIDSpawnProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				RandomStream,
 				Context.GetDeltaTimeSeconds()
 			);
+
+#if RECALL_DESYNC_LOG
+			RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDSpawnPostProcess,
+				FString::Printf(TEXT("%s MobCount: %d"),
+				*AIDEntity.DebugGetDescription(), AIDFragment.MobCount));
+
+			for (int32 GroupIndex = 0; GroupIndex < AIDFragment.SpawnGroupInstances.Num(); GroupIndex++)
+			{
+				const FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
+				RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDSpawnGroupInstance,
+					FString::Printf(TEXT("%s GroupIndex: %d, SpawnTimer: %f, bBurstCompleted: %s, BurstTimer: %f"),
+					*AIDEntity.DebugGetDescription(), GroupIndex, Instance.SpawnTimer,
+					*Recall::Desync::Conv_BoolToString(Instance.bBurstCompleted), Instance.BurstTimer));
+			}
+#endif // RECALL_DESYNC_LOG
 		}
 	});
 }
@@ -263,9 +288,21 @@ void URecallAIDStateChangeProcessor::Execute(FMassEntityManager& EntityManager, 
 			{
 				// First time seeing this entity
 				PreviousStateMap.Add(Entity, AIDFragment.CurrentAIDStateName);
+
+#if RECALL_DESYNC_LOG
+				RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDStateChangeFirstSeen,
+					FString::Printf(TEXT("%s CurrentAIDStateName: %s"),
+					*Entity.DebugGetDescription(), *AIDFragment.CurrentAIDStateName.ToString()));
+#endif // RECALL_DESYNC_LOG
 			}
 			else if (*PreviousStateName != AIDFragment.CurrentAIDStateName)
 			{
+#if RECALL_DESYNC_LOG
+				RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDStateChanged,
+					FString::Printf(TEXT("%s PreviousStateName: %s, NewStateName: %s"),
+					*Entity.DebugGetDescription(), *PreviousStateName->ToString(), *AIDFragment.CurrentAIDStateName.ToString()));
+#endif // RECALL_DESYNC_LOG
+
 				// State has changed - reset all burst completed flags and timers
 				for (FRecallAIDSpawnGroupInstance& Instance : AIDFragment.SpawnGroupInstances)
 				{
