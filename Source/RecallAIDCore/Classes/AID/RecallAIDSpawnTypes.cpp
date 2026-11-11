@@ -6,3 +6,8 @@
 
 
 #include "RecallAIDSpawnTypes.h"
+
+float FRecallAIDSpawnGroupWeightModifierBase::GetWeightMultiplier(const FRecallAttributeSet*) const
+{
+	return 1.0f;
+}

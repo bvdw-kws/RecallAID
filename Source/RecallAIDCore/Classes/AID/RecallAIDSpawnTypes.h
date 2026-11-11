@@ -7,8 +7,33 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "StructUtils/InstancedStruct.h"
 
 #include "RecallAIDSpawnTypes.generated.h"
+
+struct FRecallAttributeSet;
+
+/**
+ * Base type for modifiers that adjust a spawn group entry's weight.
+ */
+USTRUCT()
+struct RECALLAIDCORE_API FRecallAIDSpawnGroupWeightModifierBase
+{
+	GENERATED_BODY()
+
+	virtual ~FRecallAIDSpawnGroupWeightModifierBase() = default;
+	virtual float GetWeightMultiplier(const FRecallAttributeSet* AttributeSet) const;
+};
+
+/** Controls how the enabled spawn groups in an AID state are scheduled. */
+UENUM(BlueprintType)
+enum class ERecallAIDSpawnRule : uint8
+{
+	/** Each enabled group has an independent timer and can spawn in the same frame as another group. This preserves the original behavior. Spawn weights are ignored. */
+	Parallel UMETA(DisplayName="Parallel"),
+	/** Select one enabled group for each spawn event using entry weights. Only its timer counts down; its first event uses InitialTimer and later events use SpawnInterval. Burst settings are ignored. */
+	RandomWeight UMETA(DisplayName="Random Weight")
+};
 
 /**
  * Configuration data for a spawn group managed by the AI Director.
@@ -58,8 +83,7 @@ public:
 };
 
 /**
- * Entry that links a spawn group to an AID state.
- * Controls whether a specific spawn group is active in a given AI Director state.
+ * Entry that links a spawn group to an AID state and defines its availability and relative weight there.
  */
 USTRUCT()
 struct RECALLAIDCORE_API FRecallAIDStateGroupEntry
@@ -77,6 +101,14 @@ struct RECALLAIDCORE_API FRecallAIDStateGroupEntry
 	 */
 	UPROPERTY(EditAnywhere)
 	bool bEnabled = true;
+
+	/** Relative probability for this group when Random Weight is selected. A weight of zero excludes it. */
+	UPROPERTY(EditAnywhere, meta=(ClampMin="0.0", ToolTip="Relative selection weight when the state's rule is Random Weight. A weight of zero excludes this group."))
+	float Weight = 1.0f;
+
+	/** Multiplicative modifiers applied to this entry's weight under Random Weight. */
+	UPROPERTY(EditAnywhere, meta=(BaseStruct="/Script/RecallAIDCore.RecallAIDSpawnGroupWeightModifierBase", ExcludeBaseStruct, ToolTip="These modifiers multiply this entry's weight under the Random Weight rule; count and timing are unchanged."))
+	TArray<FInstancedStruct> WeightModifiers;
 };
 
 /**
@@ -93,6 +125,10 @@ struct RECALLAIDCORE_API FRecallAIDState
 	 */
 	UPROPERTY(EditAnywhere)
 	FName StateName = TEXT("Default");
+
+	/** Rule used to schedule this state's enabled spawn groups. */
+	UPROPERTY(EditAnywhere)
+	ERecallAIDSpawnRule SpawnRule = ERecallAIDSpawnRule::Parallel;
 	
 	/**
 	 * Spawn groups active in this state.
@@ -115,13 +151,13 @@ struct RECALLAIDCORE_API FRecallAIDState
 	/**
 	 * If true, spawn groups will only spawn once then stop until state changes.
 	 */
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, meta=(EditCondition="SpawnRule == ERecallAIDSpawnRule::Parallel", EditConditionHides))
 	bool bBurstMode = false;
 
 	/**
 	 * Burst duration in seconds (only used when bBurstMode is true).
 	 * 0.0 = spawn only on first frame (instant burst), > 0.0 = spawn for specified duration (spread burst).
 	 */
-	UPROPERTY(EditAnywhere, meta=(Units=Seconds, ClampMin="0.0", EditCondition="bBurstMode"))
+	UPROPERTY(EditAnywhere, meta=(Units=Seconds, ClampMin="0.0", EditCondition="SpawnRule == ERecallAIDSpawnRule::Parallel && bBurstMode", EditConditionHides))
 	float BurstDuration = 0.0f;
 };

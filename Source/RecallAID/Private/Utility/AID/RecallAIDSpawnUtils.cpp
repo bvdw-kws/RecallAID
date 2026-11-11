@@ -12,6 +12,7 @@
 #include "AID/RecallAIDAsset.h"
 #include "AID/RecallAIDSpawnPointSettings.h"
 #include "AID/RecallAIDSpawnTypes.h"
+#include "Attribute/RecallAttributeSetTypes.h"
 #include "Desync/RecallDesyncLog.h"
 #include "Entity/RecallAIDSpawnCommand.h"
 #include "NavigationSystem.h"
@@ -19,6 +20,7 @@
 #include "System/Entity/RecallEntityAsyncSpawnSubsystem.h"
 #include "System/Entity/RecallEntityAsyncSpawnTypes.h"
 #include "System/Random/RecallRandomNumberSubsystem.h"
+#include "Simulation/AID/RecallAIDSpawnGroupModifierTypes.h"
 #include "Utility/Simulation/RecallSimulationUtils.h"
 
 /**
@@ -80,7 +82,6 @@ int32 Recall::AID::Utils::SpawnEnemyGroup(
 	const FRecallAIDSpawnGroup& SpawnEnemyGroup,
 	const TArray<FRecallAIDSpawnPointCache>& SpawnPoints,
 	int32 EntityCount,
-	float& Timer,
 	float CurrentTime)
 {
 	// TODO: Filter spawn points based on gameplay tags to support different spawn zones
@@ -93,18 +94,14 @@ int32 Recall::AID::Utils::SpawnEnemyGroup(
 	UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(&SpawnContext.World);
 	const FRandomStream& RandomStream = SpawnContext.RandomNumberSystem.GetRandomStream();
 	
-	// Set timer for next spawn
-	Timer = RandomStream.FRandRange(
-		SpawnEnemyGroup.SpawnInterval.GetLowerBoundValue(), SpawnEnemyGroup.SpawnInterval.GetUpperBoundValue());
-
 	// Select spawn point
 	const int32 SpawnPointIndex = RandomStream.RandRange(0, SpawnPoints.Num() - 1);
 	const FRecallAIDSpawnPointCache& SpawnPoint = SpawnPoints[SpawnPointIndex];
 
 #if RECALL_DESYNC_LOG
 	RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnEnemyGroup,
-		FString::Printf(TEXT("%s EntityCount: %d, Timer: %f, SpawnPointIndex: %d, SpawnPointCount: %d, SpawnPointLocation: %s"),
-		*AIDEntity.DebugGetDescription(), EntityCount, Timer, SpawnPointIndex, SpawnPoints.Num(), *SpawnPoint.Location.ToString()));
+		FString::Printf(TEXT("%s EntityCount: %d, CurrentTime: %f, SpawnPointIndex: %d, SpawnPointCount: %d, SpawnPointLocation: %s"),
+		*AIDEntity.DebugGetDescription(), EntityCount, CurrentTime, SpawnPointIndex, SpawnPoints.Num(), *SpawnPoint.Location.ToString()));
 #endif // RECALL_DESYNC_LOG
 
 	// Create spawn parameters
@@ -134,6 +131,22 @@ int32 Recall::AID::Utils::SpawnEnemyGroup(
 	}
 
 	return EntityCount;
+}
+
+float Recall::AID::Utils::GetSpawnGroupEntryWeight(
+	const FRecallAIDStateGroupEntry& GroupEntry,
+	const FRecallAttributeSet* AttributeSet)
+{
+	float Weight = GroupEntry.Weight;
+	for (const FInstancedStruct& ModifierData : GroupEntry.WeightModifiers)
+	{
+		if (const FRecallAIDSpawnGroupWeightModifierBase* ModifierPtr = ModifierData.GetPtr<FRecallAIDSpawnGroupWeightModifierBase>())
+		{
+			Weight *= ModifierPtr->GetWeightMultiplier(AttributeSet);
+		}
+	}
+
+	return FMath::IsFinite(Weight) ? FMath::Max(0.0f, Weight) : 0.0f;
 }
 
 /**
@@ -172,6 +185,7 @@ static void FilterAvailableSpawnPoints(
 struct FSpawnGroupConfiguration
 {
 	bool bGroupEnabled = true;
+	float BaseWeight = 1.0f;
 	float SpawnSpeedModifier = 1.0f;
 	float SpawnRateModifier = 1.0f;
 	bool bBurstMode = false;
@@ -188,13 +202,12 @@ static FSpawnGroupConfiguration GetSpawnGroupConfiguration(
 	{
 		// Check if this group is configured in the current state
 		const FRecallAIDStateGroupEntry* GroupEntry = CurrentAIDState->SpawnGroupEntries.FindByPredicate(
-			[&](const FRecallAIDStateGroupEntry& Entry) {
-				return Entry.SpawnGroupName == SpawnGroup.GroupName;
-			});
+			[&](const FRecallAIDStateGroupEntry& Entry) { return Entry.SpawnGroupName == SpawnGroup.GroupName; });
 		
 		if (GroupEntry)
 		{
 			Config.bGroupEnabled = GroupEntry->bEnabled;
+			Config.BaseWeight = GroupEntry->Weight;
 		}
 		else
 		{
@@ -204,8 +217,9 @@ static FSpawnGroupConfiguration GetSpawnGroupConfiguration(
 		
 		Config.SpawnSpeedModifier = CurrentAIDState->SpawnSpeedModifier;
 		Config.SpawnRateModifier = CurrentAIDState->SpawnRateModifier;
-		Config.bBurstMode = CurrentAIDState->bBurstMode;
-		Config.BurstDuration = CurrentAIDState->BurstDuration;
+		Config.bBurstMode = CurrentAIDState->SpawnRule == ERecallAIDSpawnRule::Parallel
+			&& CurrentAIDState->bBurstMode;
+		Config.BurstDuration = Config.bBurstMode ? CurrentAIDState->BurstDuration : 0.0f;
 	}
 	// else: No state = default behavior (all groups enabled)
 	
@@ -213,36 +227,96 @@ static FSpawnGroupConfiguration GetSpawnGroupConfiguration(
 }
 
 /**
- * Handle burst mode logic and determine if spawning should continue.
- * Returns true if spawning should proceed, false if it should be skipped.
+ * Selects one enabled group using its effective state-entry weight.
  */
-static bool ProcessBurstMode(
-	FRecallAIDSpawnGroupInstance& Instance,
-	const FSpawnGroupConfiguration& Config,
+static int32 SelectWeightedSpawnGroup(
+	const URecallAIDAsset& AIDAsset,
+	const FRecallAIDState* CurrentAIDState,
+	const FRecallAttributeSet* AttributeSet,
+	const FRandomStream& RandomStream)
+{
+	TArray<int32> CandidateIndices;
+	TArray<float> CandidateWeights;
+	float TotalWeight = 0.0f;
+
+	for (int32 GroupIndex = 0; GroupIndex < AIDAsset.SpawnGroups.Num(); GroupIndex++)
+	{
+		const FRecallAIDSpawnGroup& SpawnGroup = AIDAsset.SpawnGroups[GroupIndex];
+		const FSpawnGroupConfiguration Config = GetSpawnGroupConfiguration(SpawnGroup, CurrentAIDState);
+		const FRecallAIDStateGroupEntry* GroupEntry = CurrentAIDState
+			? CurrentAIDState->SpawnGroupEntries.FindByPredicate([&](const FRecallAIDStateGroupEntry& Entry)
+				{
+					return Entry.SpawnGroupName == SpawnGroup.GroupName;
+				})
+			: nullptr;
+		const float EffectiveWeight = CurrentAIDState && GroupEntry
+			? Recall::AID::Utils::GetSpawnGroupEntryWeight(*GroupEntry, AttributeSet)
+			: 0.0f;
+		if (!Config.bGroupEnabled || EffectiveWeight <= 0.0f || !FMath::IsFinite(EffectiveWeight))
+		{
+			continue;
+		}
+
+		CandidateIndices.Add(GroupIndex);
+		CandidateWeights.Add(EffectiveWeight);
+		TotalWeight += EffectiveWeight;
+	}
+
+	if (CandidateIndices.IsEmpty() || TotalWeight <= 0.0f || !FMath::IsFinite(TotalWeight))
+	{
+		return INDEX_NONE;
+	}
+
+	float WeightRoll = RandomStream.FRand() * TotalWeight;
+	for (int32 CandidateIndex = 0; CandidateIndex < CandidateIndices.Num(); CandidateIndex++)
+	{
+		WeightRoll -= CandidateWeights[CandidateIndex];
+		if (WeightRoll < 0.0f)
+		{
+			return CandidateIndices[CandidateIndex];
+		}
+	}
+
+	// Floating-point rounding can leave the roll at the upper bound.
+	return CandidateIndices.Last();
+}
+
+/**
+ * Advances duration-based burst timers for enabled groups.
+ */
+static void UpdateBurstMode(
+	const URecallAIDAsset& AIDAsset,
+	FRecallAIDFragment& AIDFragment,
+	const FRecallAIDState* CurrentAIDState,
 	float DeltaTime)
 {
-	if (!Config.bBurstMode)
+	if (CurrentAIDState == nullptr
+		|| CurrentAIDState->SpawnRule != ERecallAIDSpawnRule::Parallel
+		|| !CurrentAIDState->bBurstMode
+		|| CurrentAIDState->BurstDuration <= 0.0f)
 	{
-		return true; // Not in burst mode, continue normally
+		return;
 	}
-	
-	// Update burst timer
-	Instance.BurstTimer += DeltaTime;
-	
-	// Check if burst duration has elapsed
-	if (Config.BurstDuration > 0.0f && Instance.BurstTimer >= Config.BurstDuration)
+
+	for (int32 GroupIndex = 0; GroupIndex < AIDAsset.SpawnGroups.Num(); GroupIndex++)
 	{
-		// Burst duration elapsed, mark as completed
-		Instance.bBurstCompleted = true;
+		if (!AIDFragment.SpawnGroupInstances.IsValidIndex(GroupIndex))
+		{
+			continue;
+		}
+
+		const FSpawnGroupConfiguration Config = GetSpawnGroupConfiguration(
+			AIDAsset.SpawnGroups[GroupIndex], CurrentAIDState);
+		FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
+		if (Config.bGroupEnabled && !Instance.bBurstCompleted)
+		{
+			Instance.BurstTimer += DeltaTime;
+			if (Instance.BurstTimer >= CurrentAIDState->BurstDuration)
+			{
+				Instance.bBurstCompleted = true;
+			}
+		}
 	}
-	else if (FMath::IsNearlyZero(Config.BurstDuration) && Instance.bBurstCompleted)
-	{
-		// Instant burst (0.0 duration) already completed
-		return false;
-	}
-	
-	// Skip if burst completed
-	return !Instance.bBurstCompleted;
 }
 
 /**
@@ -250,18 +324,43 @@ static bool ProcessBurstMode(
  * Returns true if spawning should occur this frame.
  */
 static bool ProcessSpawnTiming(
-	FRecallAIDSpawnGroupInstance& Instance,
+	float& SpawnTimer,
 	const FSpawnGroupConfiguration& Config,
 	float DeltaTime)
 {
-	if (Instance.SpawnTimer > 0.0f)
+	if (SpawnTimer > 0.0f)
 	{
 		// Apply speed modifier to timer countdown
 		const float TimerDelta = DeltaTime * Config.SpawnSpeedModifier;
-		Instance.SpawnTimer = FMath::Max(0.0f, Instance.SpawnTimer - TimerDelta);
+		SpawnTimer = FMath::Max(0.0f, SpawnTimer - TimerDelta);
 	}
 	
-	return FMath::IsNearlyZero(Instance.SpawnTimer);
+	return FMath::IsNearlyZero(SpawnTimer);
+}
+
+static bool ScheduleNextSpawnGroup(
+	const URecallAIDAsset& AIDAsset,
+	FRecallAIDFragment& AIDFragment,
+	const FRecallAIDState* CurrentAIDState,
+	const FRecallAttributeSet* AttributeSet,
+	const FRandomStream& RandomStream)
+{
+	const int32 GroupIndex = SelectWeightedSpawnGroup(
+		AIDAsset, CurrentAIDState, AttributeSet, RandomStream);
+	if (!AIDAsset.SpawnGroups.IsValidIndex(GroupIndex)
+		|| !AIDFragment.SpawnGroupInstances.IsValidIndex(GroupIndex))
+	{
+		AIDFragment.PendingSpawnGroupIndex = INDEX_NONE;
+		return false;
+	}
+
+	const FRecallAIDSpawnGroup& SpawnGroup = AIDAsset.SpawnGroups[GroupIndex];
+	FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
+	const FFloatRange& TimerRange = Instance.bHasSpawned ? SpawnGroup.SpawnInterval : SpawnGroup.InitialTimer;
+	AIDFragment.PendingSpawnGroupIndex = GroupIndex;
+	Instance.SpawnTimer = RandomStream.FRandRange(
+		TimerRange.GetLowerBoundValue(), TimerRange.GetUpperBoundValue());
+	return true;
 }
 
 void Recall::AID::Utils::ProcessAIDSpawnGroups(
@@ -272,12 +371,11 @@ void Recall::AID::Utils::ProcessAIDSpawnGroups(
 	const FRecallAIDState* CurrentAIDState,
 	const TArray<FRecallAIDSpawnPointCache>& SpawnPoints,
 	const FRandomStream& RandomStream,
+	const FRecallAttributeSet* AttributeSet,
 	float DeltaTime)
 {
-	// Get current time once for all spawn groups
 	const float CurrentTime = static_cast<float>(Recall::Simulation::Utils::GetTimeSeconds(&SpawnContext.World));
-	
-	// Filter available spawn points that are not on cooldown
+
 	TArray<FRecallAIDSpawnPointCache> AvailableSpawnPoints;
 	FilterAvailableSpawnPoints(SpawnPoints, AIDAsset, CurrentTime, AvailableSpawnPoints);
 
@@ -288,103 +386,141 @@ void Recall::AID::Utils::ProcessAIDSpawnGroups(
 		CurrentAIDState ? *CurrentAIDState->StateName.ToString() : TEXT("None")));
 #endif // RECALL_DESYNC_LOG
 
-	// Skip spawning if no spawn points are available due to cooldown
 	if (AvailableSpawnPoints.Num() == 0)
 	{
 		return;
 	}
 
-	for (int32 GroupIndex = 0; GroupIndex < AIDFragment.SpawnGroupInstances.Num(); GroupIndex++)
+	UpdateBurstMode(AIDAsset, AIDFragment, CurrentAIDState, DeltaTime);
+
+	const auto TrySpawnGroup = [&](int32 GroupIndex, const FSpawnGroupConfiguration& Config) -> bool
 	{
-		if (!ensure(AIDAsset.SpawnGroups.IsValidIndex(GroupIndex)))
-		{
-			continue;
-		}
-		
 		const FRecallAIDSpawnGroup& SpawnGroup = AIDAsset.SpawnGroups[GroupIndex];
-		FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
-		
-		// Get spawn configuration for this group
-		const FSpawnGroupConfiguration Config = GetSpawnGroupConfiguration(SpawnGroup, CurrentAIDState);
-
-#if RECALL_DESYNC_LOG
-		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupConfig,
-			FString::Printf(TEXT("%s GroupIndex: %d, bGroupEnabled: %s, SpawnSpeedModifier: %f, SpawnRateModifier: %f, bBurstMode: %s, BurstDuration: %f"),
-			*AIDEntity.DebugGetDescription(), GroupIndex, *Recall::Desync::Conv_BoolToString(Config.bGroupEnabled),
-			Config.SpawnSpeedModifier, Config.SpawnRateModifier, *Recall::Desync::Conv_BoolToString(Config.bBurstMode), Config.BurstDuration));
-#endif // RECALL_DESYNC_LOG
-		
-		if (!Config.bGroupEnabled)
-		{
-			continue;
-		}
-		
-		// Process burst mode logic
-		const bool bBurstModeAllowsSpawn = ProcessBurstMode(Instance, Config, DeltaTime);
-
-#if RECALL_DESYNC_LOG
-		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupBurst,
-			FString::Printf(TEXT("%s GroupIndex: %d, bBurstModeAllowsSpawn: %s, BurstTimer: %f, bBurstCompleted: %s"),
-			*AIDEntity.DebugGetDescription(), GroupIndex, *Recall::Desync::Conv_BoolToString(bBurstModeAllowsSpawn),
-			Instance.BurstTimer, *Recall::Desync::Conv_BoolToString(Instance.bBurstCompleted)));
-#endif // RECALL_DESYNC_LOG
-
-		if (!bBurstModeAllowsSpawn)
-		{
-			continue;
-		}
-		
-		// Process spawn timing
-		const bool bTimingAllowsSpawn = ProcessSpawnTiming(Instance, Config, DeltaTime);
-
-#if RECALL_DESYNC_LOG
-		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupTiming,
-			FString::Printf(TEXT("%s GroupIndex: %d, bTimingAllowsSpawn: %s, SpawnTimer: %f"),
-			*AIDEntity.DebugGetDescription(), GroupIndex, *Recall::Desync::Conv_BoolToString(bTimingAllowsSpawn), Instance.SpawnTimer));
-#endif // RECALL_DESYNC_LOG
-
-		if (!bTimingAllowsSpawn)
-		{
-			continue;
-		}
-		
-		// Time to spawn entities
-		// Keep mobs below the spawn limit.
-		// TODO: Implement entity despawning when mob limit is reached
-		int32 BaseEntityCount = RandomStream.RandRange(SpawnGroup.EntityCount.Min, SpawnGroup.EntityCount.Max);
-		
-		// Apply rate modifier to entity count
-		int32 EntityCount = FMath::RoundToInt(BaseEntityCount * Config.SpawnRateModifier);
-		EntityCount = FMath::Max(1, EntityCount); // Ensure at least 1 entity
+		const int32 BaseEntityCount = RandomStream.RandRange(SpawnGroup.EntityCount.Min, SpawnGroup.EntityCount.Max);
+		const int32 EntityCount = FMath::Max(1, FMath::RoundToInt(BaseEntityCount * Config.SpawnRateModifier));
 
 #if RECALL_DESYNC_LOG
 		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupEntityCount,
 			FString::Printf(TEXT("%s GroupIndex: %d, BaseEntityCount: %d, EntityCount: %d, MobCount: %d, MobLimit: %d"),
-			*AIDEntity.DebugGetDescription(), GroupIndex, BaseEntityCount, EntityCount, AIDFragment.MobCount, AIDAsset.MobLimit));
+			*AIDEntity.DebugGetDescription(), GroupIndex, BaseEntityCount, EntityCount,
+			AIDFragment.MobCount, AIDAsset.MobLimit));
 #endif // RECALL_DESYNC_LOG
 
 		if (AIDFragment.MobCount + EntityCount > AIDAsset.MobLimit)
 		{
+			return false;
+		}
+
+		const int32 SpawnedCount = SpawnEnemyGroup(
+			SpawnContext, AIDEntity, SpawnGroup, AvailableSpawnPoints, EntityCount, CurrentTime);
+		AIDFragment.MobCount += SpawnedCount;
+
+#if UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT
+		UE_LOG(LogTemp, VeryVerbose, TEXT("%hs: Spawned %d entities for AI Director. New mob count: %d"),
+			__FUNCTION__, SpawnedCount, AIDFragment.MobCount);
+#endif
+
+		return SpawnedCount > 0;
+	};
+
+	const bool bRandomWeightRule = CurrentAIDState
+		&& CurrentAIDState->SpawnRule == ERecallAIDSpawnRule::RandomWeight;
+	if (bRandomWeightRule)
+	{
+		if (!AIDFragment.IsSpawnTimerInitialized()
+			&& !ScheduleNextSpawnGroup(AIDAsset, AIDFragment, CurrentAIDState, AttributeSet, RandomStream))
+		{
+			return;
+		}
+
+		if (!AIDAsset.SpawnGroups.IsValidIndex(AIDFragment.PendingSpawnGroupIndex)
+			|| !AIDFragment.SpawnGroupInstances.IsValidIndex(AIDFragment.PendingSpawnGroupIndex))
+		{
+			AIDFragment.PendingSpawnGroupIndex = INDEX_NONE;
+			return;
+		}
+
+		int32 GroupIndex = AIDFragment.PendingSpawnGroupIndex;
+		FSpawnGroupConfiguration Config = GetSpawnGroupConfiguration(
+			AIDAsset.SpawnGroups[GroupIndex], CurrentAIDState);
+
+		// A state edit may have disabled the selected group while its timer was running.
+		if (!Config.bGroupEnabled)
+		{
+			AIDFragment.PendingSpawnGroupIndex = INDEX_NONE;
+			if (!ScheduleNextSpawnGroup(AIDAsset, AIDFragment, CurrentAIDState, AttributeSet, RandomStream))
+			{
+				return;
+			}
+
+			GroupIndex = AIDFragment.PendingSpawnGroupIndex;
+			Config = GetSpawnGroupConfiguration(AIDAsset.SpawnGroups[GroupIndex], CurrentAIDState);
+		}
+
+		FRecallAIDSpawnGroupInstance& SelectedInstance = AIDFragment.SpawnGroupInstances[GroupIndex];
+		const bool bTimingAllowsSpawn = ProcessSpawnTiming(SelectedInstance.SpawnTimer, Config, DeltaTime);
+#if RECALL_DESYNC_LOG
+		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupTiming,
+			FString::Printf(TEXT("%s Rule: RandomWeight, GroupIndex: %d, bTimingAllowsSpawn: %s, SpawnTimer: %f"),
+			*AIDEntity.DebugGetDescription(), GroupIndex,
+			*Recall::Desync::Conv_BoolToString(bTimingAllowsSpawn), SelectedInstance.SpawnTimer));
+#endif // RECALL_DESYNC_LOG
+
+		if (!bTimingAllowsSpawn || !TrySpawnGroup(GroupIndex, Config))
+		{
+			return;
+		}
+
+		SelectedInstance.bHasSpawned = true;
+		AIDFragment.PendingSpawnGroupIndex = INDEX_NONE;
+		ScheduleNextSpawnGroup(AIDAsset, AIDFragment, CurrentAIDState, AttributeSet, RandomStream);
+		return;
+	}
+
+	// Parallel is the default rule: every enabled group owns an independent timer.
+	for (int32 GroupIndex = 0; GroupIndex < AIDAsset.SpawnGroups.Num(); GroupIndex++)
+	{
+		if (!AIDFragment.SpawnGroupInstances.IsValidIndex(GroupIndex))
+		{
 			continue;
 		}
-		
-		const int32 SpawnedCount = SpawnEnemyGroup(SpawnContext,
-			AIDEntity, SpawnGroup, AvailableSpawnPoints, EntityCount, Instance.SpawnTimer, CurrentTime);
-		AIDFragment.MobCount += SpawnedCount;
-		
-		#if UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT
-		UE_LOG(LogTemp, VeryVerbose, TEXT("%hs: Spawned %d entities for AI Director. New mob count: %d"), 
-			__FUNCTION__, SpawnedCount, AIDFragment.MobCount);
-		#endif
-		
-		// Mark burst as completed if in instant burst mode (0.0 duration)
+
+		FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
+		const FSpawnGroupConfiguration Config = GetSpawnGroupConfiguration(
+			AIDAsset.SpawnGroups[GroupIndex], CurrentAIDState);
+		if (!Config.bGroupEnabled || (Config.bBurstMode && Instance.bBurstCompleted))
+		{
+			continue;
+		}
+
+#if RECALL_DESYNC_LOG
+		RECALL_DESYNC_LOG_STR(&SpawnContext.World, AIDSpawnGroupTiming,
+			FString::Printf(TEXT("%s Rule: Parallel, GroupIndex: %d, SpawnTimer: %f"),
+			*AIDEntity.DebugGetDescription(), GroupIndex, Instance.SpawnTimer));
+#endif // RECALL_DESYNC_LOG
+
+		if (!ProcessSpawnTiming(Instance.SpawnTimer, Config, DeltaTime))
+		{
+			continue;
+		}
+
+		if (!TrySpawnGroup(GroupIndex, Config))
+		{
+			continue;
+		}
+
+		Instance.bHasSpawned = true;
 		if (Config.bBurstMode && FMath::IsNearlyZero(Config.BurstDuration))
 		{
 			Instance.bBurstCompleted = true;
+			continue;
 		}
+
+		const FFloatRange& SpawnInterval = AIDAsset.SpawnGroups[GroupIndex].SpawnInterval;
+		Instance.SpawnTimer = RandomStream.FRandRange(
+			SpawnInterval.GetLowerBoundValue(), SpawnInterval.GetUpperBoundValue());
 	}
 }
-
 void Recall::AID::Utils::DecrementAIDMobCount(
 	FMassEntityManager& EntityManager,
 	const FMassEntityHandle& AIDEntity)

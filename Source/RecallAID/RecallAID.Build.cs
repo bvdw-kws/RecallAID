@@ -15,6 +15,7 @@ namespace UnrealBuildTool.Rules
 			PublicDependencyModuleNames.AddRange(new string[] { 
 					"Engine", 
 					"RecallAIDCore",
+					"GameplayTags",
 					"VariableCollectionModule",
 				}
 			);
@@ -30,8 +31,8 @@ namespace UnrealBuildTool.Rules
 					"RecallSimulation",
 					"RecallPhysicsModule",
 					"RecallGameplay",
+					"RecallAttributeModule",
 					"RecallSignals",
-					"GameplayTags",
 					"NavigationSystem",
 					"StateTreeModule",
 				}

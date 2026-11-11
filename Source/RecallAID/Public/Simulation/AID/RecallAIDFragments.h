@@ -15,15 +15,20 @@
 
 /**
  * Runtime instance data for a spawn group within an AI Director.
- * Tracks spawn timer and burst completion state.
+ * Tracks the group's timer and whether it has spawned or completed its current burst.
  */
 USTRUCT()
 struct RECALLAID_API FRecallAIDSpawnGroupInstance
 {
 	GENERATED_BODY()
-	
+
+	/** Time remaining until this group can spawn. */
 	UPROPERTY(VisibleAnywhere)
 	float SpawnTimer = 0.0f;
+
+	/** True after this group has spawned at least once. */
+	UPROPERTY(VisibleAnywhere)
+	bool bHasSpawned = false;
 	
 	/** True if this group has already spawned in burst mode */
 	UPROPERTY(VisibleAnywhere)
@@ -45,6 +50,15 @@ struct RECALLAID_API FRecallAIDFragment : public FMassFragment
 
 	UPROPERTY(VisibleAnywhere)
 	TArray<FRecallAIDSpawnGroupInstance> SpawnGroupInstances;
+
+	/** Group currently selected by the Random Weight rule while its timer counts down. */
+	UPROPERTY(VisibleAnywhere)
+	int32 PendingSpawnGroupIndex = INDEX_NONE;
+
+	bool IsSpawnTimerInitialized() const
+	{
+		return PendingSpawnGroupIndex != INDEX_NONE;
+	}
 	
 	UPROPERTY(VisibleAnywhere)
 	int32 MobCount = 0;

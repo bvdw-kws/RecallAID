@@ -15,6 +15,8 @@ struct FRecallAIDFragment;
 struct FRecallAIDSpawnGroup;
 struct FRecallAIDSpawnPointCache;
 struct FRecallAIDState;
+struct FRecallAIDStateGroupEntry;
+struct FRecallAttributeSet;
 class URecallAIDAsset;
 class URecallEntityAsyncSpawnSubsystem;
 class URecallRandomNumberSubsystem;
@@ -59,6 +61,14 @@ struct FRecallAIDSpawnContext
 namespace Recall::AID::Utils
 {
 	/**
+	 * Returns the effective weight for an AID state group entry.
+	 * Attribute-based modifiers return 1.0 when the entity has no attribute set or matching attribute.
+	 */
+	RECALLAID_API extern float GetSpawnGroupEntryWeight(
+		const FRecallAIDStateGroupEntry& GroupEntry,
+		const FRecallAttributeSet* AttributeSet);
+
+	/**
 	 * Spawns a group of entities based on AI Director spawn group configuration.
 	 * Handles spawn point selection, position calculation, and navigation projection.
 	 * 
@@ -67,7 +77,6 @@ namespace Recall::AID::Utils
 	 * @param SpawnEnemyGroup Configuration for the spawn group
 	 * @param SpawnPoints Available spawn points to choose from
 	 * @param EntityCount Number of entities to spawn
-	 * @param Timer Output parameter for the next spawn timer
 	 * @param CurrentTime Current game time for updating spawn point usage
 	 * @return Number of entities actually spawned
 	 */
@@ -77,12 +86,10 @@ namespace Recall::AID::Utils
 		const FRecallAIDSpawnGroup& SpawnEnemyGroup,
 		const TArray<FRecallAIDSpawnPointCache>& SpawnPoints,
 		int32 EntityCount,
-		float& Timer,
 		float CurrentTime);
 
 	/**
-	 * Processes all spawn groups for a single AI Director entity.
-	 * Handles state evaluation, timing, and spawning logic for all configured spawn groups.
+	 * Processes one AI Director using its state's Parallel or Random Weight spawn rule.
 	 * 
 	 * @param SpawnContext Context containing required systems for spawning
 	 * @param AIDAsset AI Director asset containing spawn group configuration
@@ -90,6 +97,7 @@ namespace Recall::AID::Utils
 	 * @param CurrentAIDState Current AI Director state (can be null for default behavior)
 	 * @param SpawnPoints Available spawn points for entity placement
 	 * @param RandomStream Random stream for spawn calculations
+	 * @param AttributeSet Attributes belonging to the AI Director entity, if present
 	 * @param DeltaTime Delta time for timer updates
 	 * @param AIDEntity The AI Director entity that owns these spawned entities
 	 */
@@ -101,6 +109,7 @@ namespace Recall::AID::Utils
 		const FRecallAIDState* CurrentAIDState,
 		const TArray<FRecallAIDSpawnPointCache>& SpawnPoints,
 		const FRandomStream& RandomStream,
+		const FRecallAttributeSet* AttributeSet,
 		float DeltaTime);
 
 	/**
