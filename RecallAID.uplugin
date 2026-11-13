@@ -46,6 +46,11 @@
 		{
 			"Name": "StructUtils",
 			"Enabled": true
+		},
+		{
+			"Name": "DebugMenu",
+			"Enabled": true,
+			"Optional": true
 		}
 	]
 }

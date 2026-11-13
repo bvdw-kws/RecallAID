@@ -37,6 +37,11 @@ namespace UnrealBuildTool.Rules
 					"StateTreeModule",
 				}
 			);
+
+			if (RecallCore.IsPluginEnabled(Target, "DebugMenu"))
+			{
+				PrivateDependencyModuleNames.Add("DebugMenu");
+			}
 		}
 	}
 }
