@@ -8,6 +8,7 @@
 
 #include "CoreMinimal.h"
 #include "StructUtils/InstancedStruct.h"
+#include "Collection/VariableCollectionTypes.h"
 
 #include "RecallAIDSpawnTypes.generated.h"
 
@@ -46,6 +47,13 @@ struct RECALLAIDCORE_API FRecallAIDSpawnGroup
 	
 public:
 	/**
+	 * Re-applies loaded data to the current layout. Migrates the deprecated timer ranges
+	 * into InitialTimerRange and SpawnIntervalRange (editor only). Called by the owning data asset on load.
+	 * @return True if any data was changed, so the owner can mark itself dirty.
+	 */
+	bool Reload();
+
+	/**
 	 * Name identifier for this spawn group (used by AID states to reference specific groups).
 	 */
 	UPROPERTY(EditAnywhere)
@@ -66,14 +74,22 @@ public:
 	/**
 	 * Delay before the first spawn can be initiated.
 	 */
-	UPROPERTY(EditAnywhere, meta=(Units=Seconds))
-	FFloatRange InitialTimer{ 10, 20 };
-	
+	UPROPERTY(EditAnywhere, DisplayName="Initial Timer", meta=(Units=Seconds))
+	FVariableCollectionFloatRange InitialTimerRange{ 10.0f, 20.0f };
+
 	/**
 	 * Spawn interval of this wave.
 	 */
-	UPROPERTY(EditAnywhere, meta=(Units=Seconds))
-	FFloatRange SpawnInterval{ 60, 240 };
+	UPROPERTY(EditAnywhere, DisplayName="Spawn Interval", meta=(Units=Seconds))
+	FVariableCollectionFloatRange SpawnIntervalRange{ 60.0f, 240.0f };
+
+	/** Migrated into InitialTimerRange on load. A range of (0, 0) means "not loaded from old data". */
+	UPROPERTY(meta=(DeprecatedProperty))
+	FFloatRange InitialTimer_DEPRECATED{ 0.0f, 0.0f };
+
+	/** Migrated into SpawnIntervalRange on load. A range of (0, 0) means "not loaded from old data". */
+	UPROPERTY(meta=(DeprecatedProperty))
+	FFloatRange SpawnInterval_DEPRECATED{ 0.0f, 0.0f };
 
 	/**
 	 * True, if spawned position should be projected on navigation.

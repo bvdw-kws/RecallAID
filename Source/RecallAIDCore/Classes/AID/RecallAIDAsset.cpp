@@ -8,6 +8,25 @@
 #include "RecallAIDAsset.h"
 
 
+void URecallAIDAsset::PostLoad()
+{
+	Super::PostLoad();
+
+#if WITH_EDITOR
+	bool bChanged = false;
+	for (FRecallAIDSpawnGroup& SpawnGroup : SpawnGroups)
+	{
+		bChanged |= SpawnGroup.Reload();
+	}
+
+	if (bChanged)
+	{
+		// Flag the asset so the migrated data gets resaved.
+		MarkPackageDirty();
+	}
+#endif // WITH_EDITOR
+}
+
 TArray<FString> URecallAIDAsset::GetSpawnGroupNames() const
 {
 	TArray<FString> Names;

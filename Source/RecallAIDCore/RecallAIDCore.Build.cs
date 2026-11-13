@@ -19,6 +19,7 @@ public class RecallAIDCore : ModuleRules
 			"RecallCore", 
 			"GameplayTags",
 			"StructUtils",
+			"VariableCollectionModule",
 		});
 		
 		PrivateDependencyModuleNames.AddRange(new string[] {

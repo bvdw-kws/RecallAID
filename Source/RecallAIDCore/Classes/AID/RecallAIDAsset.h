@@ -23,7 +23,7 @@ public:
 	/**
 	 * Waves that can be spawned by the AI director.
 	 */
-	UPROPERTY(EditAnywhere, Category="AI Director", meta=(TitleProperty="{GroupName} - Count:{EntityCount} Timer:{InitialTimer}s Interval:{SpawnInterval}s"))
+	UPROPERTY(EditAnywhere, Category="AI Director", meta=(TitleProperty="{GroupName} - Count:{EntityCount}"))
 	TArray<FRecallAIDSpawnGroup> SpawnGroups;
 	
 	/**
@@ -52,6 +52,8 @@ public:
 	UPROPERTY(EditAnywhere, Category="AI Director", meta=(Units=Seconds, ClampMin=0.0f, ClampMax=60.0f))
 	float SpawnPointCooldown = 0.5f;
 	
+	virtual void PostLoad() override;
+
 	/**
 	 * Get spawn group names for editor dropdown.
 	 */

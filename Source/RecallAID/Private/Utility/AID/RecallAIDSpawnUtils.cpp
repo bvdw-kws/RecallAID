@@ -356,10 +356,10 @@ static bool ScheduleNextSpawnGroup(
 
 	const FRecallAIDSpawnGroup& SpawnGroup = AIDAsset.SpawnGroups[GroupIndex];
 	FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
-	const FFloatRange& TimerRange = Instance.bHasSpawned ? SpawnGroup.SpawnInterval : SpawnGroup.InitialTimer;
+	const FVariableCollectionFloatRange& TimerRange =Instance.bHasSpawned ? SpawnGroup.SpawnIntervalRange : SpawnGroup.InitialTimerRange;
 	AIDFragment.PendingSpawnGroupIndex = GroupIndex;
 	Instance.SpawnTimer = RandomStream.FRandRange(
-		TimerRange.GetLowerBoundValue(), TimerRange.GetUpperBoundValue());
+		TimerRange.GetMinValue(), TimerRange.GetMaxValue());
 	return true;
 }
 
@@ -516,9 +516,9 @@ void Recall::AID::Utils::ProcessAIDSpawnGroups(
 			continue;
 		}
 
-		const FFloatRange& SpawnInterval = AIDAsset.SpawnGroups[GroupIndex].SpawnInterval;
+		const FVariableCollectionFloatRange& SpawnInterval =AIDAsset.SpawnGroups[GroupIndex].SpawnIntervalRange;
 		Instance.SpawnTimer = RandomStream.FRandRange(
-			SpawnInterval.GetLowerBoundValue(), SpawnInterval.GetUpperBoundValue());
+			SpawnInterval.GetMinValue(), SpawnInterval.GetMaxValue());
 	}
 }
 void Recall::AID::Utils::DecrementAIDMobCount(

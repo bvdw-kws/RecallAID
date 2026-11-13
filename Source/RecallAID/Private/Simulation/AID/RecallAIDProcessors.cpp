@@ -79,11 +79,11 @@ void URecallAIDirectorInitializer::Execute(FMassEntityManager& EntityManager, FM
 			for (int32 GroupIndex = 0; GroupIndex < SpawnGroupCount; GroupIndex++)
 			{
 				const FRecallAIDSpawnGroup& SpawnGroup = AIDAsset->SpawnGroups[GroupIndex];
-				const FFloatRange& InitialTimer = SpawnGroup.InitialTimer;
-				
+				const FVariableCollectionFloatRange& InitialTimer = SpawnGroup.InitialTimerRange;
+
 				FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
 				Instance.SpawnTimer = RandomStream.FRandRange(
-					InitialTimer.GetLowerBoundValue(), InitialTimer.GetUpperBoundValue());
+					InitialTimer.GetMinValue(), InitialTimer.GetMaxValue());
 			}
 		}
 	});
