@@ -19,6 +19,11 @@ void URecallAIDTrait::BuildTemplate(FMassEntityTemplateBuildContext& BuildContex
 
 	BuildContext.AddFragment<FRecallAIDFragment>();
 
+	if (bAutoStart)
+	{
+		BuildContext.AddTag<FRecallAIDRunningTag>();
+	}
+
 	FRecallAIDConstSharedFragment ConstSharedFragment;
 	ConstSharedFragment.AIDAsset = AIDAsset;
 

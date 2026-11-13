@@ -25,6 +25,10 @@ public:
 protected:
 	UPROPERTY(EditAnywhere, Category="AI Director", DisplayName="AI Director")
 	TObjectPtr<class URecallAIDAsset> AIDAsset;
+
+	/** Start running as soon as the entity is spawned. If false, send Recall::AID::Signals::Start to run it. */
+	UPROPERTY(EditAnywhere, Category="AI Director")
+	bool bAutoStart = true;
 };
 
 /*

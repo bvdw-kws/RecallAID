@@ -134,6 +134,8 @@ void URecallAIDSpawnProcessor::ConfigureQueries(const TSharedRef<FMassEntityMana
 	SpawnPointEntityQuery.AddConstSharedRequirement<FRecallAIDSpawnPointConstSharedFragment>();
 	
 	DirectorEntityQuery.AddRequirement<FRecallAIDFragment>(EMassFragmentAccess::ReadWrite);
+	// Paused directors (no running tag) are skipped: timers and spawning are frozen.
+	DirectorEntityQuery.AddTagRequirement<FRecallAIDRunningTag>(EMassFragmentPresence::All);
 	DirectorEntityQuery.AddRequirement<FRecallAttributeFragment>(EMassFragmentAccess::ReadOnly, EMassFragmentPresence::Optional);
 	DirectorEntityQuery.AddConstSharedRequirement<FRecallAIDConstSharedFragment>();
 	DirectorEntityQuery.AddSubsystemRequirement<URecallRandomNumberSubsystem>(EMassFragmentAccess::ReadWrite);

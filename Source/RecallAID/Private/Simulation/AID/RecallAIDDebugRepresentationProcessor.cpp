@@ -48,6 +48,7 @@ void URecallAIDDebugRepresentationProcessor::ConfigureQueries(const TSharedRef<F
 {
 #if UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT
 	EntityQuery.AddRequirement<FRecallAIDFragment>(EMassFragmentAccess::ReadOnly);
+	EntityQuery.AddTagRequirement<FRecallAIDRunningTag>(EMassFragmentPresence::Optional);
 	EntityQuery.AddRequirement<FRecallTransformFragment>(EMassFragmentAccess::ReadOnly, EMassFragmentPresence::Optional);
 	EntityQuery.AddRequirement<FRecallAttributeFragment>(EMassFragmentAccess::ReadOnly, EMassFragmentPresence::Optional);
 	EntityQuery.AddConstSharedRequirement<FRecallAIDConstSharedFragment>();
@@ -72,6 +73,8 @@ void URecallAIDDebugRepresentationProcessor::Execute(FMassEntityManager& EntityM
 		{
 			return;
 		}
+
+		const bool bIsRunning = Context.DoesArchetypeHaveTag<FRecallAIDRunningTag>();
 
 		const TConstArrayView<FRecallAIDFragment> AIDList = Context.GetFragmentView<FRecallAIDFragment>();
 		const TConstArrayView<FRecallTransformFragment> TransformList = Context.GetFragmentView<FRecallTransformFragment>();
@@ -102,7 +105,8 @@ void URecallAIDDebugRepresentationProcessor::Execute(FMassEntityManager& EntityM
 
 			// One entry per line: the on-screen message API only supports a single colour per message.
 			TArray<TPair<FString, FColor>> Lines;
-			Lines.Emplace(FString::Printf(TEXT("AID: %s"), *AIDAsset->GetName()), FColor::Orange);
+			Lines.Emplace(FString::Printf(TEXT("AID: %s%s"), *AIDAsset->GetName(), bIsRunning ? TEXT("") : TEXT(" (PAUSED)")),
+				bIsRunning ? FColor::Orange : FColor::Yellow);
 			const bool bStateNotFound = !AIDFragment.CurrentAIDStateName.IsNone() && !CurrentState;
 			Lines.Emplace(FString::Printf(TEXT("State: %s%s"), *AIDFragment.CurrentAIDStateName.ToString(),
 				bStateNotFound ? TEXT(" <Not found>") : TEXT("")), bStateNotFound ? FColor::Red : FColor::Orange);

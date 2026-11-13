@@ -75,6 +75,12 @@ struct TMassFragmentTraits<FRecallAIDFragment> final
 };
 
 /**
+ * Tag marking an AI Director that is running. Only tagged directors update their spawn timers and spawn.
+ * Added on start when the trait's bAutoStart is true, then toggled with Recall::AID::Signals::Start / Stop.
+ */
+USTRUCT() struct RECALLAID_API FRecallAIDRunningTag : public FMassTag { GENERATED_BODY() };
+
+/**
  * Shared fragment containing configuration data for AI Directors.
  * References the AID asset with spawn group definitions.
  */
