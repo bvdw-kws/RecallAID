@@ -7,9 +7,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Mass/EntityHandle.h"
 
 // Forward declarations
-struct FMassEntityHandle;
 struct FMassEntityManager;
 struct FRecallAIDFragment;
 struct FRecallAIDSpawnGroup;
@@ -28,6 +28,8 @@ struct FRecallAIDSpawnPointCache
 {
 	const struct FRecallAIDSpawnPointSettings* SpawnPointSettings = nullptr;
 	struct FRecallAIDSpawnPointFragment* SpawnPointFragment = nullptr;
+	/** The spawner entity. Used as the key of the director's per-spawner timers. */
+	FMassEntityHandle Entity;
 	FVector Location = FVector::ZeroVector;
 	FQuat Rotation = FQuat::Identity;
 };

@@ -40,6 +40,28 @@ struct RECALLAID_API FRecallAIDSpawnGroupInstance
 };
 
 /**
+ * A complete set of spawn timers: one instance per spawn group plus the Random Weight selection.
+ * The director owns one set for the Global scope; with the PerSpawner scope it owns one set per spawner.
+ */
+USTRUCT()
+struct RECALLAID_API FRecallAIDSpawnTimerSet
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere)
+	TArray<FRecallAIDSpawnGroupInstance> GroupInstances;
+
+	/** Group currently selected by the Random Weight rule while its timer counts down. */
+	UPROPERTY(VisibleAnywhere)
+	int32 PendingGroupIndex = INDEX_NONE;
+
+	bool IsSpawnTimerInitialized() const
+	{
+		return PendingGroupIndex != INDEX_NONE;
+	}
+};
+
+/**
  * Main fragment for AI Director entities.
  * Contains runtime state for managing spawn groups and mob counts.
  */
@@ -48,18 +70,18 @@ struct RECALLAID_API FRecallAIDFragment : public FMassFragment
 {
 	GENERATED_BODY()
 
+	/** Timers used by states with the Global spawn scope. */
 	UPROPERTY(VisibleAnywhere)
-	TArray<FRecallAIDSpawnGroupInstance> SpawnGroupInstances;
+	FRecallAIDSpawnTimerSet GlobalTimers;
 
-	/** Group currently selected by the Random Weight rule while its timer counts down. */
+	/**
+	 * Timers used by states with the PerSpawner spawn scope, keyed by spawner entity.
+	 * Entries are created lazily when a spawner first becomes available and pruned when the spawner is destroyed.
+	 * Iteration (prune, state-change reset, debug) is order-independent, so it does not affect determinism.
+	 */
 	UPROPERTY(VisibleAnywhere)
-	int32 PendingSpawnGroupIndex = INDEX_NONE;
+	TMap<FMassEntityHandle, FRecallAIDSpawnTimerSet> SpawnerTimers;
 
-	bool IsSpawnTimerInitialized() const
-	{
-		return PendingSpawnGroupIndex != INDEX_NONE;
-	}
-	
 	UPROPERTY(VisibleAnywhere)
 	int32 MobCount = 0;
 	

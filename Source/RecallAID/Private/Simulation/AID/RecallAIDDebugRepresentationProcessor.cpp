@@ -110,7 +110,10 @@ void URecallAIDDebugRepresentationProcessor::Execute(FMassEntityManager& EntityM
 			const bool bStateNotFound = !AIDFragment.CurrentAIDStateName.IsNone() && !CurrentState;
 			Lines.Emplace(FString::Printf(TEXT("State: %s%s"), *AIDFragment.CurrentAIDStateName.ToString(),
 				bStateNotFound ? TEXT(" <Not found>") : TEXT("")), bStateNotFound ? FColor::Red : FColor::Orange);
-			Lines.Emplace(FString::Printf(TEXT("Rule: %s | Mobs: %d/%d"), RuleText, AIDFragment.MobCount, AIDAsset->MobLimit), FColor::Orange);
+			const bool bPerSpawner = CurrentState && CurrentState->SpawnScope == ERecallAIDSpawnScope::PerSpawner;
+			Lines.Emplace(FString::Printf(TEXT("Rule: %s | Scope: %s | Mobs: %d/%d"), RuleText,
+				bPerSpawner ? *FString::Printf(TEXT("PerSpawner (%d)"), AIDFragment.SpawnerTimers.Num()) : TEXT("Global"),
+				AIDFragment.MobCount, AIDAsset->MobLimit), FColor::Orange);
 			if (CurrentState)
 			{
 				Lines.Emplace(FString::Printf(TEXT("Speed: %.2fx | Rate: %.2fx"),
@@ -137,9 +140,27 @@ void URecallAIDDebugRepresentationProcessor::Execute(FMassEntityManager& EntityM
 				}
 				else
 				{
-					if (AIDFragment.SpawnGroupInstances.IsValidIndex(GroupIndex))
+					if (bPerSpawner)
 					{
-						const FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
+						// Show the soonest timer across spawners: that is the next spawn of this group.
+						const FRecallAIDSpawnGroupInstance* NextInstance = nullptr;
+						for (const TPair<FMassEntityHandle, FRecallAIDSpawnTimerSet>& SpawnerTimerPair : AIDFragment.SpawnerTimers)
+						{
+							const TArray<FRecallAIDSpawnGroupInstance>& Instances = SpawnerTimerPair.Value.GroupInstances;
+							if (Instances.IsValidIndex(GroupIndex)
+								&& (!NextInstance || Instances[GroupIndex].SpawnTimer < NextInstance->SpawnTimer))
+							{
+								NextInstance = &Instances[GroupIndex];
+							}
+						}
+						if (NextInstance)
+						{
+							Line += FString::Printf(TEXT(" Next timer: %.1fs"), NextInstance->SpawnTimer);
+						}
+					}
+					else if (AIDFragment.GlobalTimers.GroupInstances.IsValidIndex(GroupIndex))
+					{
+						const FRecallAIDSpawnGroupInstance& Instance = AIDFragment.GlobalTimers.GroupInstances[GroupIndex];
 						Line += FString::Printf(TEXT(" Timer: %.1fs"), Instance.SpawnTimer);
 						if (Instance.bBurstCompleted)
 						{
@@ -151,7 +172,7 @@ void URecallAIDDebugRepresentationProcessor::Execute(FMassEntityManager& EntityM
 						Line += FString::Printf(TEXT(" Weight: %.2f"),
 							Recall::AID::Utils::GetSpawnGroupEntryWeight(*Entry, AttributeSet));
 					}
-					if (AIDFragment.PendingSpawnGroupIndex == GroupIndex)
+					if (!bPerSpawner && AIDFragment.GlobalTimers.PendingGroupIndex == GroupIndex)
 					{
 						Line += TEXT(" <Pending>");
 						LineColor = FColor::Green;

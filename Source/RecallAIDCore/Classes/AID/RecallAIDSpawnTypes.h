@@ -15,7 +15,8 @@
 struct FRecallAttributeSet;
 
 /**
- * Base type for modifiers that adjust a spawn group entry's weight.
+ * Base type for modifiers that return a multiplier computed from the director's attributes.
+ * Used for a spawn group entry's weight and for the lower and upper bounds of its spawn interval.
  */
 USTRUCT()
 struct RECALLAIDCORE_API FRecallAIDSpawnGroupWeightModifierBase
@@ -34,6 +35,16 @@ enum class ERecallAIDSpawnRule : uint8
 	Parallel UMETA(DisplayName="Parallel"),
 	/** Select one enabled group for each spawn event using entry weights. Only its timer counts down; its first event uses InitialTimer and later events use SpawnInterval. Burst settings are ignored. */
 	RandomWeight UMETA(DisplayName="Random Weight")
+};
+
+/** Controls whether spawn timers are owned by the director or by each individual spawner. */
+UENUM(BlueprintType)
+enum class ERecallAIDSpawnScope : uint8
+{
+	/** The director owns one set of timers. Each spawn event picks a random available spawner. This preserves the original behavior. */
+	Global UMETA(DisplayName="Global"),
+	/** Every spawner in range owns its own set of timers (initial delay and interval per group) and spawns from itself. The rule (Parallel / Random Weight) is applied independently per spawner. */
+	PerSpawner UMETA(DisplayName="Per Spawner")
 };
 
 /**
@@ -82,6 +93,20 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, DisplayName="Spawn Interval", meta=(Units=Seconds))
 	FVariableCollectionFloatRange SpawnIntervalRange{ 60.0f, 240.0f };
+
+	/**
+	 * Multiplicative modifiers applied to the lower bound of Spawn Interval each time the next spawn is scheduled.
+	 * The first spawn still uses Initial Timer.
+	 */
+	UPROPERTY(EditAnywhere, meta=(BaseStruct="/Script/RecallAIDCore.RecallAIDSpawnGroupWeightModifierBase", ExcludeBaseStruct, ToolTip="These modifiers multiply the lower bound of Spawn Interval. If the modified lower bound exceeds the upper bound, the upper bound is raised to match."))
+	TArray<FInstancedStruct> SpawnIntervalMinModifiers;
+
+	/**
+	 * Multiplicative modifiers applied to the upper bound of Spawn Interval each time the next spawn is scheduled.
+	 * The first spawn still uses Initial Timer.
+	 */
+	UPROPERTY(EditAnywhere, meta=(BaseStruct="/Script/RecallAIDCore.RecallAIDSpawnGroupWeightModifierBase", ExcludeBaseStruct, ToolTip="These modifiers multiply the upper bound of Spawn Interval. If the modified upper bound is below the lower bound, it is raised to the lower bound."))
+	TArray<FInstancedStruct> SpawnIntervalMaxModifiers;
 
 	/** Migrated into InitialTimerRange on load. A range of (0, 0) means "not loaded from old data". */
 	UPROPERTY(meta=(DeprecatedProperty))
@@ -145,7 +170,14 @@ struct RECALLAIDCORE_API FRecallAIDState
 	/** Rule used to schedule this state's enabled spawn groups. */
 	UPROPERTY(EditAnywhere)
 	ERecallAIDSpawnRule SpawnRule = ERecallAIDSpawnRule::Parallel;
-	
+
+	/**
+	 * Who owns the spawn timers. Global: the director (random spawner per spawn). Per Spawner: every spawner in range
+	 * has its own initial delay and interval per group, and the rule above is applied independently per spawner.
+	 */
+	UPROPERTY(EditAnywhere)
+	ERecallAIDSpawnScope SpawnScope = ERecallAIDSpawnScope::Global;
+
 	/**
 	 * Spawn groups active in this state.
 	 */

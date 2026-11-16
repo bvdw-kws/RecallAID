@@ -17,6 +17,7 @@
 #include "System/Entity/RecallEntityAsyncSpawnSubsystem.h"
 #include "System/Random/RecallRandomNumberSubsystem.h"
 #include "Utility/AID/RecallAIDSpawnUtils.h"
+#include "Utility/AID/RecallAIDSpawnInternal.h"
 
 //----------------------------------------------------------------------//
 // URecallAIDirectorInitializer
@@ -54,14 +55,13 @@ void URecallAIDirectorInitializer::Execute(FMassEntityManager& EntityManager, FM
 		}
 
 		const TObjectPtr<URecallAIDAsset>& AIDAsset = AIDConstSharedFragment.AIDAsset;
-		const int32 SpawnGroupCount = AIDAsset->SpawnGroups.Num();
-		
+
 		const TArrayView<FRecallAIDFragment> AIDList = Context.GetMutableFragmentView<FRecallAIDFragment>();
-		
+
 		for (int32 EntityIndex = 0; EntityIndex < Context.GetNumEntities(); EntityIndex++)
 		{
-			FRecallAIDFragment& AIDFragment = AIDList[EntityIndex];			
-			AIDFragment.SpawnGroupInstances.SetNum(SpawnGroupCount);
+			FRecallAIDFragment& AIDFragment = AIDList[EntityIndex];
+			Recall::AID::Utils::Private::InitializeTimerSet(*AIDAsset, RandomStream, AIDFragment.GlobalTimers);
 
 			// Set default AID state if specified
 			if (!AIDAsset->DefaultAIDState.IsNone())
@@ -74,16 +74,6 @@ void URecallAIDirectorInitializer::Execute(FMassEntityManager& EntityManager, FM
 				{
 					AIDFragment.CurrentAIDStateName = AIDAsset->DefaultAIDState;
 				}
-			}
-
-			for (int32 GroupIndex = 0; GroupIndex < SpawnGroupCount; GroupIndex++)
-			{
-				const FRecallAIDSpawnGroup& SpawnGroup = AIDAsset->SpawnGroups[GroupIndex];
-				const FVariableCollectionFloatRange& InitialTimer = SpawnGroup.InitialTimerRange;
-
-				FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
-				Instance.SpawnTimer = RandomStream.FRandRange(
-					InitialTimer.GetMinValue(), InitialTimer.GetMaxValue());
 			}
 		}
 	});
@@ -172,6 +162,7 @@ void URecallAIDSpawnProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			}
 
 			FRecallAIDSpawnPointCache& SpawnPoint = SpawnPoints[SpawnPointCount++];
+			SpawnPoint.Entity = Context.GetEntity(EntityIndex);
 			SpawnPoint.SpawnPointSettings = &SpawnPointConstSharedFragment.SpawnPointSettings;
 			SpawnPoint.SpawnPointFragment = &SpawnPointFragment;
 			SpawnPoint.Location = TransformFragment.Position;
@@ -181,7 +172,7 @@ void URecallAIDSpawnProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 
 	// Phase 2: Process AI Directors and spawn entities based on their configuration
 	DirectorEntityQuery.ForEachEntityChunk(Context,
-		[&SpawnPoints](FMassExecutionContext& Context)
+		[&SpawnPoints, &EntityManager](FMassExecutionContext& Context)
 	{
 		const auto& AIDConstSharedFragment = Context.GetConstSharedFragment<FRecallAIDConstSharedFragment>();
 		if (!AIDConstSharedFragment.AIDAsset)
@@ -211,6 +202,18 @@ void URecallAIDSpawnProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			const FRecallAttributeFragment* AttributeFragmentPtr = AttributeList.IsValidIndex(EntityIndex)
 				? &AttributeList[EntityIndex]
 				: nullptr;
+
+			// Drop per-spawner timers of spawners that no longer exist (e.g. destroyed on wave cleanup).
+			if (!AIDFragment.SpawnerTimers.IsEmpty())
+			{
+				for (auto TimerIt = AIDFragment.SpawnerTimers.CreateIterator(); TimerIt; ++TimerIt)
+				{
+					if (!EntityManager.IsEntityValid(TimerIt.Key()))
+					{
+						TimerIt.RemoveCurrent();
+					}
+				}
+			}
 
 			// Find current AID state (if any)
 			const FRecallAIDState* CurrentAIDState = nullptr;
@@ -242,17 +245,18 @@ void URecallAIDSpawnProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			);
 
 #if RECALL_DESYNC_LOG
-			const float PendingSpawnTimer = AIDFragment.SpawnGroupInstances.IsValidIndex(AIDFragment.PendingSpawnGroupIndex)
-				? AIDFragment.SpawnGroupInstances[AIDFragment.PendingSpawnGroupIndex].SpawnTimer
+			const FRecallAIDSpawnTimerSet& GlobalTimers = AIDFragment.GlobalTimers;
+			const float PendingSpawnTimer = GlobalTimers.GroupInstances.IsValidIndex(GlobalTimers.PendingGroupIndex)
+				? GlobalTimers.GroupInstances[GlobalTimers.PendingGroupIndex].SpawnTimer
 				: 0.0f;
 			RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDSpawnPostProcess,
 				FString::Printf(TEXT("%s MobCount: %d, PendingSpawnGroupIndex: %d, SpawnTimer: %f"),
 				*AIDEntity.DebugGetDescription(), AIDFragment.MobCount,
-				AIDFragment.PendingSpawnGroupIndex, PendingSpawnTimer));
+				GlobalTimers.PendingGroupIndex, PendingSpawnTimer));
 
-			for (int32 GroupIndex = 0; GroupIndex < AIDFragment.SpawnGroupInstances.Num(); GroupIndex++)
+			for (int32 GroupIndex = 0; GroupIndex < GlobalTimers.GroupInstances.Num(); GroupIndex++)
 			{
-				const FRecallAIDSpawnGroupInstance& Instance = AIDFragment.SpawnGroupInstances[GroupIndex];
+				const FRecallAIDSpawnGroupInstance& Instance = GlobalTimers.GroupInstances[GroupIndex];
 				RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDSpawnGroupInstance,
 					FString::Printf(TEXT("%s GroupIndex: %d, SpawnTimer: %f, bHasSpawned: %s, bBurstCompleted: %s, BurstTimer: %f"),
 					*AIDEntity.DebugGetDescription(), GroupIndex,
@@ -319,12 +323,20 @@ void URecallAIDStateChangeProcessor::Execute(FMassEntityManager& EntityManager, 
 #endif // RECALL_DESYNC_LOG
 
 				// State has changed - reset burst tracking and let Random Weight choose again.
-				for (FRecallAIDSpawnGroupInstance& Instance : AIDFragment.SpawnGroupInstances)
+				const auto ResetTimerSet = [](FRecallAIDSpawnTimerSet& Timers)
 				{
-					Instance.bBurstCompleted = false;
-					Instance.BurstTimer = 0.0f;
+					for (FRecallAIDSpawnGroupInstance& Instance : Timers.GroupInstances)
+					{
+						Instance.bBurstCompleted = false;
+						Instance.BurstTimer = 0.0f;
+					}
+					Timers.PendingGroupIndex = INDEX_NONE;
+				};
+				ResetTimerSet(AIDFragment.GlobalTimers);
+				for (TPair<FMassEntityHandle, FRecallAIDSpawnTimerSet>& SpawnerTimerPair : AIDFragment.SpawnerTimers)
+				{
+					ResetTimerSet(SpawnerTimerPair.Value);
 				}
-				AIDFragment.PendingSpawnGroupIndex = INDEX_NONE;
 				
 				// Update the stored state
 				*PreviousStateName = AIDFragment.CurrentAIDStateName;
