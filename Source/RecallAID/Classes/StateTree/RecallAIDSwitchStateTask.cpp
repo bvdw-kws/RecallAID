@@ -12,6 +12,7 @@
 #include "Simulation/AID/RecallAIDFragments.h"
 #include "StateTreeExecutionContext.h"
 #include "StateTreeLinker.h"
+#include "Utility/AID/RecallAIDStateUtils.h"
 
 //----------------------------------------------------------------------//
 // FRecallAIDSwitchStateTask
@@ -44,15 +45,9 @@ EStateTreeRunStatus FRecallAIDSwitchStateTask::EnterState(FStateTreeExecutionCon
 		return EStateTreeRunStatus::Failed;
 	}
 	
-	// Validate that the target state exists
-	const bool bStateExists = AIDAsset->AIDStates.ContainsByPredicate([&](const FRecallAIDState& State) {
-		return State.StateName == InstanceData.TargetStateName;
-	});
-	
-	if (bStateExists)
+	// Switches only when the target state exists in the AID asset
+	if (Recall::AID::Utils::SetAIDState(AIDFragment, AIDAsset, InstanceData.TargetStateName))
 	{
-		AIDFragment.CurrentAIDStateName = InstanceData.TargetStateName;
-
 		if (bSucceedOnSwitchState)
 		{
 			return EStateTreeRunStatus::Succeeded;
