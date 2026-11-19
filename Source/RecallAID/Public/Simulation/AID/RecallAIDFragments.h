@@ -88,6 +88,13 @@ struct RECALLAID_API FRecallAIDFragment : public FMassFragment
 	/** Current AID state name (empty = default state using all spawn groups) */
 	UPROPERTY(VisibleAnywhere)
 	FName CurrentAIDStateName;
+
+	/**
+	 * State name seen by URecallAIDStateChangeProcessor on its last run, used to detect state changes.
+	 * Kept in the fragment so it is saved and restored with the simulation snapshots (rollback safe).
+	 */
+	UPROPERTY(VisibleAnywhere)
+	FName PreviousAIDStateName = NAME_None;
 };
 
 template <>

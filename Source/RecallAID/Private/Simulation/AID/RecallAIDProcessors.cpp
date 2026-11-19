@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2024 Van de Walle Bastien
+// Copyright (C) 2024 Van de Walle Bastien
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -294,32 +294,16 @@ void URecallAIDStateChangeProcessor::Execute(FMassEntityManager& EntityManager, 
 		{
 			FRecallAIDFragment& AIDFragment = AIDList[EntityIndex];
 			
-			// Store previous state name in a thread-safe manner
-			// TODO: This should be stored as a fragment on the entity rather than a static map
-			static FCriticalSection MapCriticalSection;
-			static TMap<FMassEntityHandle, FName> PreviousStateMap;
-			
-			FScopeLock Lock(&MapCriticalSection);
 			const FMassEntityHandle Entity = Context.GetEntity(EntityIndex);
-			
-			FName* PreviousStateName = PreviousStateMap.Find(Entity);
-			if (!PreviousStateName)
-			{
-				// First time seeing this entity
-				PreviousStateMap.Add(Entity, AIDFragment.CurrentAIDStateName);
 
-#if RECALL_DESYNC_LOG
-				RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDStateChangeFirstSeen,
-					FString::Printf(TEXT("%s CurrentAIDStateName: %s"),
-					*Entity.DebugGetDescription(), *AIDFragment.CurrentAIDStateName.ToString()));
-#endif // RECALL_DESYNC_LOG
-			}
-			else if (*PreviousStateName != AIDFragment.CurrentAIDStateName)
+			// The previous state lives in the fragment so a rollback restores it with the rest of the simulation.
+			// It starts as None, so the first run counts as a state change and starts from fresh timers.
+			if (AIDFragment.PreviousAIDStateName != AIDFragment.CurrentAIDStateName)
 			{
 #if RECALL_DESYNC_LOG
 				RECALL_DESYNC_LOG_STR(Context.GetWorld(), AIDStateChanged,
 					FString::Printf(TEXT("%s PreviousStateName: %s, NewStateName: %s"),
-					*Entity.DebugGetDescription(), *PreviousStateName->ToString(), *AIDFragment.CurrentAIDStateName.ToString()));
+					*Entity.DebugGetDescription(), *AIDFragment.PreviousAIDStateName.ToString(), *AIDFragment.CurrentAIDStateName.ToString()));
 #endif // RECALL_DESYNC_LOG
 
 				// State has changed - reset burst tracking and let Random Weight choose again.
@@ -339,7 +323,7 @@ void URecallAIDStateChangeProcessor::Execute(FMassEntityManager& EntityManager, 
 				}
 				
 				// Update the stored state
-				*PreviousStateName = AIDFragment.CurrentAIDStateName;
+				AIDFragment.PreviousAIDStateName = AIDFragment.CurrentAIDStateName;
 			}
 		}
 	});
